@@ -10,30 +10,29 @@ import java.util.concurrent.Semaphore;
 /**
  * @author Gong Zhang
  */
-class TimeGuard {
+final class TimeoutExecutor {
 
     private final long timeout;
     private final Runnable task;
 
-    TimeGuard(long timeout, Runnable task) {
+    TimeoutExecutor(long timeout, Runnable task) {
         this.timeout = timeout;
         this.task = task;
     }
 
-    void execute() throws ProcBridgeException {
-        execute(null);
+    void executeAndWait() throws TimeoutException, InterruptedException {
+        executeAndWait(null);
     }
 
-    void execute(@Nullable ExecutorService executorService) throws ProcBridgeException {
+    void executeAndWait(@Nullable ExecutorService executorService) throws TimeoutException, InterruptedException {
         final Semaphore semaphore = new Semaphore(0);
-        final boolean[] overtime = { false };
-        final Exception[] exception = { null };
+        final boolean[] isTimeout = { false };
 
         Timer timer = new Timer();
         timer.schedule(new TimerTask() {
             @Override
             public void run() {
-                overtime[0] = true;
+                isTimeout[0] = true;
                 semaphore.release();
             }
         }, timeout);
@@ -41,8 +40,6 @@ class TimeGuard {
         Runnable runnable = () -> {
             try {
                 task.run();
-            } catch (Exception ex) {
-                exception[0] = ex;
             } finally {
                 semaphore.release();
             }
@@ -55,22 +52,9 @@ class TimeGuard {
 
         try {
             semaphore.acquire();
-            if (overtime[0]) {
-                throw ProcBridgeException.timeout();
+            if (isTimeout[0]) {
+                throw new TimeoutException();
             }
-            if (exception[0] != null) {
-                Throwable ex = exception[0].getCause();
-                if (ex == null) {
-                    ex = exception[0];
-                }
-                if (ex instanceof ProcBridgeException) {
-                    throw (ProcBridgeException) ex;
-                } else {
-                    throw new ProcBridgeException(ex);
-                }
-            }
-        } catch (InterruptedException e) {
-            throw new ProcBridgeException(e);
         } finally {
             timer.cancel();
         }

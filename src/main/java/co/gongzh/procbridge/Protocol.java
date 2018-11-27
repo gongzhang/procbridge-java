@@ -5,374 +5,178 @@ import org.jetbrains.annotations.Nullable;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.*;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.AbstractMap;
+import java.util.Map;
 
-/**
- * @author Gong Zhang
- */
+import static co.gongzh.procbridge.ProtocolException.*;
+
+
 final class Protocol {
 
     private static final byte[] FLAG = { 'p', 'b' };
-    private static final byte[] VERSION = { 1, 0 };
 
-    enum StatusCode {
-        REQUEST(0), RESPONSE_GOOD(1), RESPONSE_BAD(2);
-        int rawValue;
-        StatusCode(int rawValue) {
-            this.rawValue = rawValue;
+    private static @NotNull Map.Entry<StatusCode, JSONObject> read(@NotNull InputStream stream) throws IOException, ProtocolException, JSONException {
+        int b;
+
+        // 1. FLAG
+        b = stream.read();
+        if (b == -1 || b != FLAG[0]) throw new ProtocolException(UNRECOGNIZED_PROTOCOL);
+        b = stream.read();
+        if (b == -1 || b != FLAG[1]) throw new ProtocolException(UNRECOGNIZED_PROTOCOL);
+
+        // 2. VERSION
+        b = stream.read();
+        if (b == -1) throw new ProtocolException(INCOMPLETE_DATA);
+        if (b != Versions.CURRENT[0]) throw new ProtocolException(INCOMPATIBLE_VERSION);
+        b = stream.read();
+        if (b == -1) throw new ProtocolException(INCOMPLETE_DATA);
+        if (b != Versions.CURRENT[1]) throw new ProtocolException(INCOMPATIBLE_VERSION);
+
+        // 3. STATUS CODE
+        b = stream.read();
+        if (b == -1) throw new ProtocolException(INCOMPLETE_DATA);
+        StatusCode statusCode = StatusCode.fromRawValue(b);
+        if (statusCode == null) {
+            throw new ProtocolException(INVALID_STATUS_CODE);
         }
-        @Nullable
-        static StatusCode fromRawValue(int rawValue) {
-            for (StatusCode sc : StatusCode.values()) {
-                if (sc.rawValue == rawValue) {
-                    return sc;
-                }
+
+        // 4. RESERVED BYTES (2 bytes)
+        b = stream.read();
+        if (b == -1) throw new ProtocolException(INCOMPLETE_DATA);
+        b = stream.read();
+        if (b == -1) throw new ProtocolException(INCOMPLETE_DATA);
+
+        // 5. LENGTH (little endian)
+        int bodyLen;
+        b = stream.read();
+        if (b == -1) throw new ProtocolException(INCOMPLETE_DATA);
+        bodyLen = b;
+        b = stream.read();
+        if (b == -1) throw new ProtocolException(INCOMPLETE_DATA);
+        bodyLen |= (b << 8);
+        b = stream.read();
+        if (b == -1) throw new ProtocolException(INCOMPLETE_DATA);
+        bodyLen |= (b << 16);
+        b = stream.read();
+        if (b == -1) throw new ProtocolException(INCOMPLETE_DATA);
+        bodyLen |= (b << 24);
+
+        // 6. JSON OBJECT
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        int readCount;
+        int restCount = bodyLen;
+        byte[] buf = new byte[Math.min(bodyLen, 1024 * 1024)];
+        while ((readCount = stream.read(buf, 0, Math.min(buf.length, restCount))) != -1) {
+            buffer.write(buf, 0, readCount);
+            restCount -= readCount;
+            if (restCount == 0) {
+                break;
             }
-            return null;
         }
-        @NotNull
-        Decoder makeDecoder() throws ProcBridgeException {
-            switch (this) {
-                case REQUEST: return new RequestDecoder();
-                case RESPONSE_GOOD: return new GoodResponseDecoder();
-                case RESPONSE_BAD: return new BadResponseDecoder();
-                default: throw new InternalError("unknown status code");
-            }
+
+        if (buffer.size() != bodyLen) {
+            throw new ProtocolException(INCOMPLETE_DATA);
         }
+
+        buffer.flush();
+        buf = buffer.toByteArray();
+        String jsonText = new String(buf, StandardCharsets.UTF_8);
+        JSONObject body = new JSONObject(jsonText);
+
+        return new AbstractMap.SimpleEntry<>(statusCode, body);
     }
 
-    static final String KEY_API = "api";
-    static final String KEY_BODY = "body";
-    static final String KEY_MESSAGE = "msg";
+    private static void write(@NotNull OutputStream stream, @NotNull StatusCode statusCode, @NotNull JSONObject body) throws IOException {
+        // 1. FLAG 'p', 'b'
+        stream.write(FLAG);
 
-    static void write(OutputStream stream, Encoder encoder) throws ProcBridgeException {
-        try {
-            // 1. FLAG 'p', 'b'
-            stream.write(FLAG);
+        // 2. VERSION
+        stream.write(Versions.CURRENT);
 
-            // 2. VERSION
-            stream.write(VERSION);
+        // 3. STATUS CODE
+        stream.write(statusCode.rawValue);
 
-            // 3. STATUS CODE
-            stream.write(encoder.getStatusCode().rawValue);
+        // 4. RESERVED BYTES (2 bytes)
+        stream.write(0);
+        stream.write(0);
 
-            // 4. RESERVED BYTES (2 bytes)
-            stream.write(0);
-            stream.write(0);
+        // make json object
+        byte[] buf = body.toString().getBytes(StandardCharsets.UTF_8);
 
-            // make json object
-            byte[] data = encoder.encode();
+        // 5. LENGTH (4-byte, little endian)
+        int len = buf.length;
+        int b0 = len & 0xff;
+        int b1 = (len & 0xff00) >> 8;
+        int b2 = (len & 0xff0000) >> 16;
+        int b3 = (len & 0xff000000) >> 24;
+        stream.write(b0);
+        stream.write(b1);
+        stream.write(b2);
+        stream.write(b3);
 
-            // 5. LENGTH (4-byte, little endian)
-            int len = data.length;
-            int b0 = len & 0xff;
-            int b1 = (len & 0xff00) >> 8;
-            int b2 = (len & 0xff0000) >> 16;
-            int b3 = (len & 0xff000000) >> 24;
-            stream.write(b0);
-            stream.write(b1);
-            stream.write(b2);
-            stream.write(b3);
+        // 6. JSON OBJECT
+        stream.write(buf);
 
-            // 6. JSON OBJECT
-            stream.write(data);
-
-            stream.flush();
-        } catch (IOException e) {
-            throw new ProcBridgeException(e);
-        }
+        stream.flush();
     }
 
-    static Decoder read(InputStream stream) throws ProcBridgeException {
-        try {
-            int b;
-
-            // 1. FLAG
-            b = stream.read();
-            if (b == -1) throw ProcBridgeException.unexpectedEndOfStream();
-            if (b != FLAG[0]) throw ProcBridgeException.malformedInputData();
-            b = stream.read();
-            if (b == -1) throw ProcBridgeException.unexpectedEndOfStream();
-            if (b != FLAG[1]) throw ProcBridgeException.malformedInputData();
-
-            // 2. VERSION
-            b = stream.read();
-            if (b == -1) throw ProcBridgeException.unexpectedEndOfStream();
-            if (b != VERSION[0]) throw ProcBridgeException.incompatibleVersion();
-            b = stream.read();
-            if (b == -1) throw ProcBridgeException.unexpectedEndOfStream();
-            if (b != VERSION[1]) throw ProcBridgeException.incompatibleVersion();
-
-            // 3. STATUS CODE
-            b = stream.read();
-            if (b == -1) throw ProcBridgeException.unexpectedEndOfStream();
-            StatusCode statusCode = StatusCode.fromRawValue(b);
-            if (statusCode == null) {
-                throw ProcBridgeException.malformedInputData();
-            }
-            Decoder decoder = statusCode.makeDecoder();
-
-            // 4. RESERVED BYTES (2 bytes)
-            b = stream.read();
-            if (b == -1) throw ProcBridgeException.unexpectedEndOfStream();
-            b = stream.read();
-            if (b == -1) throw ProcBridgeException.unexpectedEndOfStream();
-
-            // 5. LENGTH (little endian)
-            int len;
-            b = stream.read();
-            if (b == -1) throw ProcBridgeException.unexpectedEndOfStream();
-            len = b;
-            b = stream.read();
-            if (b == -1) throw ProcBridgeException.unexpectedEndOfStream();
-            len |= (b << 8);
-            b = stream.read();
-            if (b == -1) throw ProcBridgeException.unexpectedEndOfStream();
-            len |= (b << 16);
-            b = stream.read();
-            if (b == -1) throw ProcBridgeException.unexpectedEndOfStream();
-            len |= (b << 24);
-
-            if (len <= 0) {
-                throw ProcBridgeException.malformedInputData();
-            }
-
-            // 6. JSON OBJECT
-            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-            int nRead;
-            byte[] data = new byte[1024];
-            while ((nRead = stream.read(data, 0, data.length)) != -1) {
-                buffer.write(data, 0, nRead);
-                if (buffer.size() >= len) {
-                    break;
-                }
-            }
-
-            if (buffer.size() != len) {
-                throw ProcBridgeException.malformedInputData();
-            }
-
-            buffer.flush();
-            data = buffer.toByteArray();
-            String jsonText = new String(data, "UTF-8");
-            JSONObject obj = new JSONObject(jsonText);
-
-            decoder.decode(obj);
-            return decoder;
-
-        } catch (IOException e) {
-            throw new ProcBridgeException(e);
-        } catch (JSONException e) {
-            throw ProcBridgeException.malformedInputData();
+    static @NotNull Map.Entry<String, Object> readRequest(@NotNull InputStream stream) throws IOException, ProtocolException, JSONException {
+        Map.Entry<StatusCode, JSONObject> entry = read(stream);
+        StatusCode statusCode = entry.getKey();
+        JSONObject body = entry.getValue();
+        if (statusCode != StatusCode.REQUEST) {
+            throw new ProtocolException(INVALID_STATUS_CODE);
         }
+        String method = body.optString(Keys.METHOD);
+        Object payload = body.opt(Keys.PAYLOAD);
+        return new AbstractMap.SimpleEntry<>(method, payload);
     }
 
-}
-
-abstract class Encoder {
-    abstract byte[] encode() throws ProcBridgeException;
-    abstract Protocol.StatusCode getStatusCode();
-}
-
-final class RequestEncoder extends Encoder {
-
-    @NotNull
-    private final String api;
-    @Nullable
-    private final JSONObject body;
-
-    RequestEncoder(@NotNull String api, @Nullable JSONObject body) {
-        if (api.isEmpty()) {
-            throw new IllegalArgumentException("api cannot be empty");
-        }
-        this.api = api;
-        this.body = body;
-    }
-
-    @Override
-    byte[] encode() throws ProcBridgeException {
-        JSONObject obj = new JSONObject();
-        obj.put(Protocol.KEY_API, api);
-        if (body != null) {
-            obj.put(Protocol.KEY_BODY, body);
+    static @NotNull Map.Entry<StatusCode, Object> readResponse(@NotNull InputStream stream) throws IOException, ProtocolException, JSONException {
+        Map.Entry<StatusCode, JSONObject> entry = read(stream);
+        StatusCode statusCode = entry.getKey();
+        JSONObject body = entry.getValue();
+        if (statusCode == StatusCode.GOOD_RESPONSE) {
+            return new AbstractMap.SimpleEntry<>(StatusCode.GOOD_RESPONSE, body.opt(Keys.PAYLOAD));
+        } else if (statusCode == StatusCode.BAD_RESPONSE) {
+            return new AbstractMap.SimpleEntry<>(StatusCode.BAD_RESPONSE, body.optString(Keys.MESSAGE));
         } else {
-            obj.put(Protocol.KEY_BODY, new JSONObject());
-        }
-        String jsonText = obj.toString();
-        try {
-            return jsonText.getBytes("UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            throw new ProcBridgeException(e);
+            throw new ProtocolException(INVALID_STATUS_CODE);
         }
     }
 
-    @Override
-    Protocol.StatusCode getStatusCode() {
-        return Protocol.StatusCode.REQUEST;
-    }
-}
-
-final class GoodResponseEncoder extends Encoder {
-
-    @Nullable
-    private final JSONObject body;
-
-    GoodResponseEncoder(@Nullable JSONObject body) {
-        this.body = body;
-    }
-
-    @Override
-    byte[] encode() throws ProcBridgeException {
-        JSONObject obj = new JSONObject();
-        if (body != null) {
-            obj.put(Protocol.KEY_BODY, body);
+    static void writeRequest(@NotNull OutputStream stream, @Nullable String method, @Nullable Object payload) throws IOException {
+        JSONObject body = new JSONObject();
+        if (method != null) {
+            body.put(Keys.METHOD, method);
         }
-        String jsonText = obj.toString();
-        try {
-            return jsonText.getBytes("UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            throw new ProcBridgeException(e);
+        if (payload != null) {
+            body.put(Keys.PAYLOAD, payload);
         }
+        write(stream, StatusCode.REQUEST, body);
     }
 
-    @Override
-    Protocol.StatusCode getStatusCode() {
-        return Protocol.StatusCode.RESPONSE_GOOD;
+    static void writeGoodResponse(@NotNull OutputStream stream, @Nullable Object payload) throws IOException {
+        JSONObject body = new JSONObject();
+        if (payload != null) {
+            body.put(Keys.PAYLOAD, payload);
+        }
+        write(stream, StatusCode.GOOD_RESPONSE, body);
     }
 
-}
-
-final class BadResponseEncoder extends Encoder {
-
-    @Nullable
-    private final String message;
-
-    BadResponseEncoder(@Nullable String message) {
-        this.message = message;
-    }
-
-    @Override
-    byte[] encode() throws ProcBridgeException {
-        JSONObject obj = new JSONObject();
+    static void writeBadResponse(@NotNull OutputStream stream, @Nullable String message) throws IOException {
+        JSONObject body = new JSONObject();
         if (message != null) {
-            obj.put(Protocol.KEY_MESSAGE, message);
+            body.put(Keys.MESSAGE, message);
         }
-        String jsonText = obj.toString();
-        try {
-            return jsonText.getBytes("UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            throw new ProcBridgeException(e);
-        }
+        write(stream, StatusCode.BAD_RESPONSE, body);
     }
 
-    @Override
-    Protocol.StatusCode getStatusCode() {
-        return Protocol.StatusCode.RESPONSE_BAD;
-    }
+    private Protocol() {}
 
-}
-
-abstract class Decoder {
-
-    abstract void decode(JSONObject object) throws ProcBridgeException;
-    abstract JSONObject getResponseBody();
-    abstract String getErrorMessage();
-    abstract RequestDecoder asRequest();
-
-}
-
-final class RequestDecoder extends Decoder {
-
-    @NotNull
-    String api = "";
-    @NotNull
-    JSONObject body = new JSONObject();
-
-    @Override
-    void decode(JSONObject object) throws ProcBridgeException {
-        try {
-            String api = object.getString(Protocol.KEY_API);
-            if (api.isEmpty()) {
-                throw ProcBridgeException.malformedInputData();
-            }
-            this.api = api;
-
-            JSONObject body = object.optJSONObject(Protocol.KEY_BODY);
-            if (body != null) {
-                this.body = body;
-            }
-
-        } catch (JSONException ex) {
-            throw ProcBridgeException.malformedInputData();
-        }
-    }
-
-    JSONObject getResponseBody() {
-        return null;
-    }
-
-    String getErrorMessage() {
-        return null;
-    }
-
-    @Override
-    RequestDecoder asRequest() {
-        return this;
-    }
-}
-
-final class GoodResponseDecoder extends Decoder {
-
-    @NotNull
-    private
-    JSONObject body = new JSONObject();
-
-    @Override
-    void decode(JSONObject object) throws ProcBridgeException {
-        JSONObject body = object.optJSONObject(Protocol.KEY_BODY);
-        if (body != null) {
-            this.body = body;
-        }
-    }
-
-    JSONObject getResponseBody() {
-        return body;
-    }
-
-    String getErrorMessage() {
-        return null;
-    }
-
-    @Override
-    RequestDecoder asRequest() {
-        return null;
-    }
-}
-
-final class BadResponseDecoder extends Decoder {
-
-    @NotNull
-    private
-    String message = "";
-
-    @Override
-    void decode(JSONObject object) throws ProcBridgeException {
-        String msg = object.optString(Protocol.KEY_MESSAGE);
-        if (msg != null) {
-            this.message = msg;
-        }
-    }
-
-    JSONObject getResponseBody() {
-        return null;
-    }
-
-    String getErrorMessage() {
-        return message;
-    }
-
-    @Override
-    RequestDecoder asRequest() {
-        return null;
-    }
 }

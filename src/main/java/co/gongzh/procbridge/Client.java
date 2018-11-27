@@ -13,6 +13,7 @@ import java.net.Socket;
 /**
  * @author Gong Zhang
  */
+@Deprecated
 public final class ProcBridge {
 
     private final String host;
@@ -59,13 +60,13 @@ public final class ProcBridge {
 
     @NotNull
     public JSONObject request(@NotNull String api, @Nullable JSONObject body) throws ProcBridgeException {
-        final RequestEncoder request = new RequestEncoder(api, body);
+        final Request request = new Request(api, body);
 
         final JSONObject[] out_json = { null };
         final String[] out_err_msg = { null };
 
         try (final Socket socket = new Socket(host, port)) {
-            TimeGuard guard = new TimeGuard(timeout, new Runnable() {
+            TimeoutExecutor guard = new TimeoutExecutor(timeout, new Runnable() {
                 @Override
                 public void run() {
                     try (OutputStream os = socket.getOutputStream();

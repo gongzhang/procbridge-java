@@ -1,10 +1,12 @@
 package co.gongzh.procbridge;
 
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Map;
@@ -23,6 +25,8 @@ public class Server {
     private ServerSocket serverSocket;
     private boolean started;
 
+    private @Nullable PrintStream logger;
+
     public Server(int port, @NotNull IDelegate delegate) {
         this.port = port;
         this.delegate = delegate;
@@ -30,6 +34,7 @@ public class Server {
         this.started = false;
         this.executor = null;
         this.serverSocket = null;
+        this.logger = System.err;
     }
 
     public final synchronized boolean isStarted() {
@@ -38,6 +43,15 @@ public class Server {
 
     public final int getPort() {
         return port;
+    }
+
+    @Nullable
+    public PrintStream getLogger() {
+        return logger;
+    }
+
+    public void setLogger(@Nullable PrintStream logger) {
+        this.logger = logger;
     }
 
     public synchronized void start() {
@@ -92,7 +106,7 @@ public class Server {
         this.started = false;
     }
 
-    static final class Connection implements Runnable {
+    final class Connection implements Runnable {
 
         private final Socket socket;
         private final IDelegate delegate;
@@ -124,7 +138,10 @@ public class Server {
                 } else {
                     Protocol.writeGoodResponse(os, result);
                 }
-            } catch (Exception ignored) {
+            } catch (Exception ex) {
+                if (logger != null) {
+                    ex.printStackTrace(logger);
+                }
             }
         }
 

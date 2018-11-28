@@ -10,4 +10,8 @@ public final class ServerException extends RuntimeException {
         super(message != null ? message : UNKNOWN_SERVER_ERROR);
     }
 
+    ServerException(Throwable cause) {
+        super(cause);
+    }
+
 }

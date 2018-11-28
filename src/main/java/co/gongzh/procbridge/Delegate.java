@@ -20,7 +20,7 @@ public abstract class Delegate implements IDelegate {
 
     protected Delegate() {
         this.handlers = new HashMap<>();
-        for (Method m : this.getClass().getMethods()) {
+        for (Method m : this.getClass().getDeclaredMethods()) {
             if (m.getAnnotation(Handler.class) != null) {
                 String key = m.getName();
                 if (handlers.containsKey(key)) {
@@ -66,7 +66,9 @@ public abstract class Delegate implements IDelegate {
                 }
                 result = m.invoke(this, arr.toList().toArray());
             }
-        } catch (IllegalAccessException | InvocationTargetException e) {
+        } catch (InvocationTargetException e) {
+            throw new ServerException(e.getTargetException());
+        } catch (IllegalAccessException e) {
             throw new ServerException(e);
         }
 

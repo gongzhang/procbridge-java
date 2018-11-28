@@ -11,7 +11,7 @@ public final class ServerException extends RuntimeException {
     }
 
     ServerException(Throwable cause) {
-        super(cause);
+        super(cause.getMessage(), cause);
     }
 
 }

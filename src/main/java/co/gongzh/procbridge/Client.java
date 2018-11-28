@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
+import java.net.UnknownHostException;
 import java.util.Map;
 import java.util.concurrent.Executor;
 
@@ -30,7 +31,7 @@ public class Client {
         this.executor = executor;
     }
 
-    public Client(String host, int port) {
+    public Client(@NotNull String host, int port) {
         this(host, port, FOREVER, null);
     }
 
@@ -53,7 +54,7 @@ public class Client {
     }
 
     @Nullable
-    public final Object request(@Nullable String method, @Nullable JSONObject payload) throws IOException, TimeoutException, ServerException {
+    public final Object request(@Nullable String method, @Nullable Object payload) throws ClientException, TimeoutException, ServerException {
         final StatusCode[] respStatusCode = { null };
         final Object[] respPayload = { null };
         final Throwable[] innerException = { null };
@@ -79,6 +80,8 @@ public class Client {
                 TimeoutExecutor guard = new TimeoutExecutor(timeout, executor);
                 guard.execute(task);
             }
+        } catch (IOException ex) {
+            throw new ClientException(ex);
         }
 
         if (innerException[0] != null) {

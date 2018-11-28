@@ -1,9 +1,7 @@
 package co.gongzh.procbridge;
 
-import org.jetbrains.annotations.Nullable;
 import org.json.JSONArray;
 import org.json.JSONObject;
-import org.json.JSONStringer;
 import org.junit.*;
 
 import java.io.File;
@@ -19,34 +17,12 @@ import static org.junit.Assert.*;
 
 public class ServerClientTest {
 
-    private static final int PORT = 8000;
-
     private static Server server;
     private Client client;
 
     @BeforeClass
     public static void setUpClass() throws Exception {
-        server = new Server(PORT, new Delegate() {
-            @Handler
-            Object echo(Object payload) {
-                return payload;
-            }
-
-            @Handler
-            int sum(JSONArray numbers) {
-                return numbers.toList().stream().mapToInt(el -> (int) el).sum();
-            }
-
-            @Handler
-            void err() {
-                throw new RuntimeException("generated error");
-            }
-
-            @Override
-            protected @Nullable Object handleUnknownRequest(@Nullable String method, @Nullable Object payload) {
-                return null;
-            }
-        });
+        server = new TestServer();
         server.start();
     }
 
@@ -58,7 +34,7 @@ public class ServerClientTest {
 
     @Before
     public void setUp() throws Exception {
-        client = new Client("127.0.0.1", PORT);
+        client = new Client("127.0.0.1", TestServer.PORT);
     }
 
     @After

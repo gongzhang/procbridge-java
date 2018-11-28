@@ -14,7 +14,7 @@ import java.util.concurrent.Executors;
 /**
  * @author Gong Zhang
  */
-public final class Server {
+public class Server {
 
     private final int port;
     private final @NotNull IDelegate delegate;
@@ -32,20 +32,25 @@ public final class Server {
         this.serverSocket = null;
     }
 
-    public synchronized boolean isStarted() {
+    public final synchronized boolean isStarted() {
         return started;
     }
 
-    public int getPort() {
+    public final int getPort() {
         return port;
     }
 
-    public synchronized void start() throws IOException {
+    public synchronized void start() {
         if (started) {
             throw new IllegalStateException("server already started");
         }
 
-        final ServerSocket serverSocket = new ServerSocket(this.port);
+        final ServerSocket serverSocket;
+        try {
+            serverSocket = new ServerSocket(this.port);
+        } catch (IOException e) {
+            throw new ServerException(e);
+        }
         this.serverSocket = serverSocket;
 
         final ExecutorService executor = Executors.newCachedThreadPool();

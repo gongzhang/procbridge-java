@@ -2,35 +2,44 @@ package co.gongzh.procbridge;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
+import java.util.Map;
+import java.util.concurrent.Executor;
 
 /**
  * @author Gong Zhang
  */
-@Deprecated
-public final class ProcBridge {
+public class Client {
 
-    private final String host;
+    private final @NotNull String host;
     private final int port;
-    private long timeout;
+    private final long timeout;
+    private final @Nullable Executor executor;
 
-    public ProcBridge(String host, int port, long timeout) {
+    public static final long FOREVER = 0;
+
+    public Client(@NotNull String host, int port, long timeout, @Nullable Executor executor) {
         this.host = host;
         this.port = port;
         this.timeout = timeout;
+        this.executor = executor;
     }
 
-    public String getHost() {
+    public Client(String host, int port) {
+        this(host, port, FOREVER, null);
+    }
+
+    @NotNull
+    public final String getHost() {
         return host;
     }
 
-    public int getPort() {
+    public final int getPort() {
         return port;
     }
 
@@ -38,68 +47,49 @@ public final class ProcBridge {
         return timeout;
     }
 
-    public void setTimeout(long timeout) {
-        this.timeout = timeout;
+    @Nullable
+    public Executor getExecutor() {
+        return executor;
     }
 
-    public JSONObject request(@NotNull String api) throws ProcBridgeException {
-        return request(api, (JSONObject) null);
-    }
-
-    public JSONObject request(@NotNull String api, @Nullable String jsonText) throws ProcBridgeException {
-        try {
-            if (jsonText == null) {
-                jsonText = "{}";
-            }
-            JSONObject obj = new JSONObject(jsonText);
-            return request(api, obj);
-        } catch (JSONException ex) {
-            throw new IllegalArgumentException(ex);
-        }
-    }
-
-    @NotNull
-    public JSONObject request(@NotNull String api, @Nullable JSONObject body) throws ProcBridgeException {
-        final Request request = new Request(api, body);
-
-        final JSONObject[] out_json = { null };
-        final String[] out_err_msg = { null };
+    @Nullable
+    public final Object request(@Nullable String method, @Nullable JSONObject payload) throws IOException, TimeoutException, ServerException {
+        final StatusCode[] respStatusCode = { null };
+        final Object[] respPayload = { null };
+        final Throwable[] innerException = { null };
 
         try (final Socket socket = new Socket(host, port)) {
-            TimeoutExecutor guard = new TimeoutExecutor(timeout, new Runnable() {
-                @Override
-                public void run() {
-                    try (OutputStream os = socket.getOutputStream();
-                         InputStream is = socket.getInputStream()) {
+            Runnable task = () -> {
+                try (OutputStream os = socket.getOutputStream();
+                     InputStream is = socket.getInputStream()) {
 
-                        Protocol.write(os, request);
-                        Decoder decoder = Protocol.read(is);
-                        out_json[0] = decoder.getResponseBody();
-                        if (out_json[0] == null) {
-                            // must be error
-                            out_err_msg[0] = decoder.getErrorMessage();
-                        }
+                    Protocol.writeRequest(os, method, payload);
+                    Map.Entry<StatusCode, Object> entry = Protocol.readResponse(is);
+                    respStatusCode[0] = entry.getKey();
+                    respPayload[0] = entry.getValue();
 
-                    } catch (IOException | ProcBridgeException e) {
-                        throw new RuntimeException(e);
-                    }
+                } catch (Exception ex) {
+                    innerException[0] = ex;
                 }
-            });
-            guard.execute();
-        } catch (IOException e) {
-            throw new ProcBridgeException(e);
-        }
+            };
 
-        if (out_json[0] == null) {
-            if (out_err_msg[0] == null) {
-                out_err_msg[0] = "server error";
+            if (timeout <= 0) {
+                task.run();
             } else {
-                throw new ProcBridgeException(out_err_msg[0]);
+                TimeoutExecutor guard = new TimeoutExecutor(timeout, executor);
+                guard.execute(task);
             }
         }
 
-        assert out_json[0] != null;
-        return out_json[0];
+        if (innerException[0] != null) {
+            throw new RuntimeException(innerException[0]);
+        }
+
+        if (respStatusCode[0] != StatusCode.GOOD_RESPONSE) {
+            throw new ServerException((String) respPayload[0]);
+        }
+
+        return respPayload[0];
     }
 
 }

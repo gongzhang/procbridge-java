@@ -2,7 +2,6 @@ package co.gongzh.procbridge;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -20,7 +19,7 @@ final class Protocol {
 
     private static final byte[] FLAG = { 'p', 'b' };
 
-    private static @NotNull Map.Entry<StatusCode, JSONObject> read(@NotNull InputStream stream) throws IOException, ProtocolException, JSONException {
+    private static @NotNull Map.Entry<StatusCode, JSONObject> read(@NotNull InputStream stream) throws IOException, ProtocolException {
         int b;
 
         // 1. FLAG
@@ -85,10 +84,14 @@ final class Protocol {
 
         buffer.flush();
         buf = buffer.toByteArray();
-        String jsonText = new String(buf, StandardCharsets.UTF_8);
-        JSONObject body = new JSONObject(jsonText);
 
-        return new AbstractMap.SimpleEntry<>(statusCode, body);
+        try {
+            String jsonText = new String(buf, StandardCharsets.UTF_8);
+            JSONObject body = new JSONObject(jsonText);
+            return new AbstractMap.SimpleEntry<>(statusCode, body);
+        } catch (Exception ex) {
+            throw new ProtocolException(INVALID_BODY);
+        }
     }
 
     private static void write(@NotNull OutputStream stream, @NotNull StatusCode statusCode, @NotNull JSONObject body) throws IOException {
@@ -125,7 +128,7 @@ final class Protocol {
         stream.flush();
     }
 
-    static @NotNull Map.Entry<String, Object> readRequest(@NotNull InputStream stream) throws IOException, ProtocolException, JSONException {
+    static @NotNull Map.Entry<String, Object> readRequest(@NotNull InputStream stream) throws IOException, ProtocolException {
         Map.Entry<StatusCode, JSONObject> entry = read(stream);
         StatusCode statusCode = entry.getKey();
         JSONObject body = entry.getValue();
@@ -137,7 +140,7 @@ final class Protocol {
         return new AbstractMap.SimpleEntry<>(method, payload);
     }
 
-    static @NotNull Map.Entry<StatusCode, Object> readResponse(@NotNull InputStream stream) throws IOException, ProtocolException, JSONException {
+    static @NotNull Map.Entry<StatusCode, Object> readResponse(@NotNull InputStream stream) throws IOException, ProtocolException {
         Map.Entry<StatusCode, JSONObject> entry = read(stream);
         StatusCode statusCode = entry.getKey();
         JSONObject body = entry.getValue();

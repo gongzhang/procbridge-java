@@ -1,30 +1,38 @@
 package co.gongzh.procbridge;
 
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Semaphore;
 
 /**
  * @author Gong Zhang
  */
-final class TimeoutExecutor {
+final class TimeoutExecutor implements Executor {
 
     private final long timeout;
-    private final Runnable task;
+    private final @Nullable Executor base;
 
-    TimeoutExecutor(long timeout, Runnable task) {
+    TimeoutExecutor(long timeout, @Nullable Executor base) {
         this.timeout = timeout;
-        this.task = task;
+        this.base = base;
     }
 
-    void executeAndWait() throws TimeoutException, InterruptedException {
-        executeAndWait(null);
+    public long getTimeout() {
+        return timeout;
     }
 
-    void executeAndWait(@Nullable ExecutorService executorService) throws TimeoutException, InterruptedException {
+    @Nullable
+    public Executor getBaseExecutor() {
+        return base;
+    }
+
+    @Override
+    public void execute(@NotNull Runnable task) throws TimeoutException {
         final Semaphore semaphore = new Semaphore(0);
         final boolean[] isTimeout = { false };
 
@@ -44,8 +52,8 @@ final class TimeoutExecutor {
                 semaphore.release();
             }
         };
-        if (executorService != null) {
-            executorService.execute(runnable);
+        if (base != null) {
+            base.execute(runnable);
         } else {
             new Thread(runnable).start();
         }
@@ -55,6 +63,7 @@ final class TimeoutExecutor {
             if (isTimeout[0]) {
                 throw new TimeoutException();
             }
+        } catch (InterruptedException ignored) {
         } finally {
             timer.cancel();
         }

@@ -2,7 +2,6 @@ package co.gongzh.procbridge;
 
 import org.jetbrains.annotations.Nullable;
 import org.json.JSONArray;
-import org.junit.Test;
 
 public class TestServer extends Server {
 

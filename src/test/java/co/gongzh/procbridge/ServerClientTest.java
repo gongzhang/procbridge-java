@@ -12,6 +12,7 @@ import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 import static org.junit.Assert.*;
 
@@ -22,14 +23,21 @@ public class ServerClientTest {
 
     @BeforeClass
     public static void setUpClass() throws Exception {
-        server = new TestServer();
-        server.start();
+        try {
+            server = new TestServer();
+            server.start();
+        } catch (ServerException ex) {
+            System.out.println(String.format("use existing server on port %d", TestServer.PORT));
+            server = null;
+        }
     }
 
     @AfterClass
     public static void tearDownClass() throws Exception {
-        server.stop();
-        server = null;
+        if (server != null) {
+            server.stop();
+            server = null;
+        }
     }
 
     @Before
@@ -92,7 +100,7 @@ public class ServerClientTest {
     public void testBigPayload() {
         try {
             ClassLoader classLoader = getClass().getClassLoader();
-            File file = new File(classLoader.getResource("article.txt").getFile());
+            File file = new File(Objects.requireNonNull(classLoader.getResource("article.txt")).getFile());
             String text = new String(Files.readAllBytes(Paths.get(file.getAbsolutePath())), StandardCharsets.UTF_8);
             Object reply = client.request("echo", text);
             assertEquals(text, reply);

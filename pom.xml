@@ -6,7 +6,7 @@
 
     <groupId>co.gongzh.procbridge</groupId>
     <artifactId>procbridge</artifactId>
-    <version>1.1</version>
+    <version>1.1.1</version>
     <packaging>jar</packaging>
 
     <name>procbridge</name>
@@ -146,12 +146,12 @@
         <dependency>
             <groupId>org.json</groupId>
             <artifactId>json</artifactId>
-            <version>20160810</version>
+            <version>20180813</version>
         </dependency>
         <dependency>
             <groupId>org.jetbrains</groupId>
             <artifactId>annotations</artifactId>
-            <version>15.0</version>
+            <version>16.0.3</version>
         </dependency>
     </dependencies>
 
